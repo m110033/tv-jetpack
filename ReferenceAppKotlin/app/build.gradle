@@ -41,6 +41,8 @@ android {
         // such as the ability to create a user account. When false, those features are hidden,
         // there is no user account, and watch progress is stored locally.
         buildConfigField("boolean", "FIREBASE_ENABLED", "false")
+        // 使用 10.0.2.2 而非 localhost，確保 Android 模擬器可訪問主機服務
+        buildConfigField "String", "GAMER_BASE_URL", '"http://10.0.2.2:3000"'
     }
 
     buildTypes {
@@ -85,6 +87,7 @@ dependencies {
     implementation "androidx.fragment:fragment-ktx:$fragment_version"
     implementation "androidx.leanback:leanback:$leanback_version"
     implementation "androidx.lifecycle:lifecycle-extensions:2.2.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.4.1"
     implementation "androidx.navigation:navigation-fragment-ktx:$nav_version"
     implementation "androidx.navigation:navigation-ui-ktx:$nav_version"
     implementation "androidx.preference:preference-ktx:1.2.0"
@@ -113,6 +116,8 @@ dependencies {
     implementation "com.google.android.exoplayer:exoplayer-core:$exoplayer_version"
     implementation "com.google.android.exoplayer:extension-leanback:$exoplayer_version"
     implementation "com.google.android.exoplayer:extension-mediasession:$exoplayer_version"
+    // Add HLS support for m3u8 playback
+    implementation "com.google.android.exoplayer:exoplayer-hls:$exoplayer_version"
 
     // Google Play Services for identity
     def playservices_version = "20.1.0"
@@ -143,4 +148,7 @@ dependencies {
     testImplementation "org.mockito:mockito-core:4.4.0"
     testImplementation 'org.mockito:mockito-inline:4.4.0'
     testImplementation 'org.robolectric:robolectric:4.7.3'
+
+    // OkHttp explicit dependency for direct client usage
+    implementation 'com.squareup.okhttp3:okhttp:4.9.3'
 }

@@ -21,12 +21,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.widget.Toast
 import androidx.leanback.app.BackgroundManager
 import androidx.leanback.app.BrowseSupportFragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
 import com.android.tv.reference.R
 import com.android.tv.reference.shared.datamodel.Video
+import com.android.tv.reference.shared.datamodel.VideoType
 import com.android.tv.reference.shared.image.BlurImageTransformation
 import com.android.tv.reference.shared.image.OverlayImageTransformation
 import com.squareup.picasso.Picasso
@@ -43,7 +45,7 @@ class BrowseFragment : BrowseSupportFragment(), Target {
 
     companion object {
         private const val BACKGROUND_UPDATE_DELAY_MILLIS = 500L
-        private const val BACKGROUND_RESOURCE_ID = R.drawable.image_placeholder
+        private val BACKGROUND_RESOURCE_ID = R.drawable.image_placeholder
     }
 
     private lateinit var viewModel: BrowseViewModel
@@ -101,29 +103,41 @@ class BrowseFragment : BrowseSupportFragment(), Target {
         viewModel.isSignedIn.observe(
             this,
             {
-                viewModel.customMenuItems.postValue(
-                    listOf(
-                        BrowseCustomMenu(
-                            getString(R.string.menu_identity),
-                            listOf(
-                                if (it) {
-                                    signOutMenuItem
-                                } else {
-                                    signInMenuItem
-                                }
-                            )
-                        )
-                    )
-                )
+                // 不再需要在此處處理選單更新，已在 ViewModel 中處理
             }
         )
 
+        // 處理導航到登入頁面的事件
+        viewModel.navigateToSignIn.observe(this, { shouldNavigate ->
+            if (shouldNavigate == true) {
+                findNavController().navigate(R.id.action_global_signInFragment)
+                viewModel.onNavigationHandled()
+            }
+        })
+
+        // 觀察載入狀態並顯示提示
+        viewModel.isLoading.observe(this, { isLoading ->
+            if (isLoading) {
+                // 顯示加載狀態
+                val message = viewModel.loadingMessage.value ?: "載入中..."
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            }
+        })
+
         setOnItemViewClickedListener { _, item, _, _ ->
             when (item) {
-                is Video ->
-                    findNavController().navigate(
-                        BrowseFragmentDirections.actionBrowseFragmentToPlaybackFragment(item)
-                    )
+                is Video -> {
+                    if (item.videoType == VideoType.EPISODE) {
+                        // Navigate to series details screen for episode selection
+                        findNavController().navigate(
+                            BrowseFragmentDirections.actionBrowseFragmentToSeriesDetailsFragment(item)
+                        )
+                    } else {
+                        findNavController().navigate(
+                            BrowseFragmentDirections.actionBrowseFragmentToPlaybackFragment(item)
+                        )
+                    }
+                }
                 is BrowseCustomMenu.MenuItem -> item.handler()
             }
         }
@@ -138,6 +152,9 @@ class BrowseFragment : BrowseSupportFragment(), Target {
         // (with setBadgeDrawable) to the top right of the screen. Since we don't have a suitable
         // Drawable, we just display the app name in text.
         title = getString(R.string.app_name)
+
+        // Disable headers (side category list) to prevent header cast issues with many single-item rows
+        headersState = HEADERS_DISABLED
     }
 
     /**

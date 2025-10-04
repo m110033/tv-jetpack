@@ -21,6 +21,7 @@ import android.view.View
 import androidx.fragment.app.viewModels
 import androidx.leanback.app.VideoSupportFragment
 import androidx.leanback.app.VideoSupportFragmentGlueHost
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.android.tv.reference.R
 import com.android.tv.reference.castconnect.CastHelper
@@ -34,10 +35,18 @@ import com.google.android.exoplayer2.SimpleExoPlayer
 import com.google.android.exoplayer2.ext.leanback.LeanbackPlayerAdapter
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
+import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
+import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.util.Util
 import com.google.android.gms.cast.tv.CastReceiverContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import com.squareup.moshi.Moshi
 import timber.log.Timber
 import java.time.Duration
 
@@ -120,59 +129,80 @@ class PlaybackFragment : VideoSupportFragment() {
     }
 
     private fun initializePlayer() {
-        val dataSourceFactory = DefaultDataSource.Factory(requireContext())
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).
-            createMediaSource(MediaItem.fromUri((video.videoUri)))
         exoplayer = ExoPlayer.Builder(requireContext()).build().apply {
-            setMediaSource(mediaSource)
-            prepare()
             addListener(PlayerEventListener())
             prepareGlue(this)
             mediaSessionConnector.setPlayer(object: ForwardingPlayer(this) {
                 override fun stop() {
-                    // Treat stop commands as pause, this keeps ExoPlayer, MediaSession, etc.
-                    // in memory to allow for quickly resuming. This also maintains the playback
-                    // position so that the user will resume from the current position when backing
-                    // out and returning to this video
                     Timber.v("Playback stopped at $currentPosition")
-                    // This both prevents playback from starting automatically and pauses it if
-                    // it's already playing
                     playWhenReady = false
                 }
             })
             mediaSession.isActive = true
         }
-
         viewModel.onStateChange(VideoPlaybackState.Load(video))
-    }
 
-    private fun destroyPlayer() {
-        mediaSession.isActive = false
-        mediaSessionConnector.setPlayer(null)
-        exoplayer?.let {
-            // Pause the player to notify listeners before it is released.
-            it.pause()
-            it.release()
-            exoplayer = null
+        // Determine if we need to resolve gamer m3u8 JSON first
+        if (isGamerResolver(video.videoUri)) {
+            resolveGamerM3u8(video.videoUri)
+        } else {
+            prepareProgressive(video.videoUri)
         }
     }
 
-    private fun prepareGlue(localExoplayer: ExoPlayer) {
-        ProgressTransportControlGlue(
-            requireContext(),
-            LeanbackPlayerAdapter(
-                requireContext(),
-                localExoplayer,
-                PLAYER_UPDATE_INTERVAL_MILLIS.toInt()
-            ),
-            onProgressUpdate
-        ).apply {
-            host = VideoSupportFragmentGlueHost(this@PlaybackFragment)
-            title = video.name
-            // Enable seek manually since PlaybackTransportControlGlue.getSeekProvider() is null,
-            // so that PlayerAdapter.seekTo(long) will be called during user seeking.
-            // TODO(gargsahil@): Add a PlaybackSeekDataProvider to support video scrubbing.
-            isSeekEnabled = true
+    private fun isGamerResolver(uri: String): Boolean = uri.contains("/gamer/m3u8")
+
+    private fun prepareProgressive(uri: String) {
+        val dataSourceFactory = DefaultDataSource.Factory(requireContext())
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(uri))
+        exoplayer?.apply {
+            setMediaSource(mediaSource)
+            prepare()
+        }
+    }
+
+    private fun prepareHls(m3u8Url: String, referer: String?, cookies: String?) {
+        val httpFactory = DefaultHttpDataSource.Factory().apply {
+            val headers = mutableMapOf<String, String>()
+            referer?.takeIf { it.isNotBlank() }?.let { headers["Referer"] = it }
+            cookies?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
+            if (headers.isNotEmpty()) setDefaultRequestProperties(headers)
+        }
+        val mediaSource = HlsMediaSource.Factory(httpFactory).createMediaSource(MediaItem.fromUri(m3u8Url))
+        exoplayer?.apply {
+            setMediaSource(mediaSource)
+            prepare()
+        }
+    }
+
+    private fun resolveGamerM3u8(resolverUrl: String) {
+        val client = OkHttpClient()
+        data class GamerM3u8Response(val success: Boolean, val sn: String?, val m3u8Url: String?, val referer: String?, val cookies: String?)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url(resolverUrl).build()
+                client.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${'$'}{resp.code}")
+                    val body = resp.body?.string() ?: throw IllegalStateException("Empty body")
+                    val moshi = Moshi.Builder().build()
+                    val adapter = moshi.adapter(GamerM3u8Response::class.java)
+                    val parsed = adapter.fromJson(body)
+                    val m3u8 = parsed?.m3u8Url
+                    if (parsed?.success == true && !m3u8.isNullOrBlank()) {
+                        withContext(Dispatchers.Main) {
+                            prepareHls(m3u8, parsed.referer, parsed.cookies)
+                        }
+                    } else {
+                        throw IllegalStateException("Invalid gamer m3u8 response")
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to resolve gamer m3u8")
+                withContext(Dispatchers.Main) {
+                    viewModel.onStateChange(VideoPlaybackState.Error(video, e))
+                }
+            }
         }
     }
 
@@ -199,6 +229,22 @@ class PlaybackFragment : VideoSupportFragment() {
         //  episodic content.
     }
 
+    private fun prepareGlue(localExoplayer: ExoPlayer) {
+        ProgressTransportControlGlue(
+            requireContext(),
+            LeanbackPlayerAdapter(
+                requireContext(),
+                localExoplayer,
+                PLAYER_UPDATE_INTERVAL_MILLIS.toInt()
+            ),
+            onProgressUpdate
+        ).apply {
+            host = VideoSupportFragmentGlueHost(this@PlaybackFragment)
+            title = video.name
+            isSeekEnabled = true
+        }
+    }
+
     inner class PlayerEventListener : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
             Timber.w(error, "Playback error")
@@ -214,6 +260,16 @@ class PlaybackFragment : VideoSupportFragment() {
                 else -> viewModel.onStateChange(
                     VideoPlaybackState.Pause(video, exoplayer!!.currentPosition))
             }
+        }
+    }
+
+    private fun destroyPlayer() {
+        mediaSession.isActive = false
+        mediaSessionConnector.setPlayer(null)
+        exoplayer?.let {
+            it.pause()
+            it.release()
+            exoplayer = null
         }
     }
 
