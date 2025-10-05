@@ -64,6 +64,20 @@
         <action
             android:id="@+id/action_browseFragment_to_playbackFragment"
             app:destination="@id/playbackFragment" />
+        <action
+            android:id="@+id/action_browseFragment_to_seriesDetailsFragment"
+            app:destination="@id/seriesDetailsFragment" />
+    </fragment>
+    <fragment
+        android:id="@+id/seriesDetailsFragment"
+        android:name="com.android.tv.reference.details.SeriesDetailsFragment"
+        android:label="SeriesDetailsFragment">
+        <argument
+            android:name="video"
+            app:argType="com.android.tv.reference.shared.datamodel.Video" />
+        <action
+            android:id="@+id/action_seriesDetailsFragment_to_playbackFragment"
+            app:destination="@id/playbackFragment" />
     </fragment>
     <fragment
         android:id="@+id/noFirebaseFragment"

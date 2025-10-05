@@ -16,6 +16,7 @@
 package com.android.tv.reference.repository
 
 import android.app.Application
+import com.android.tv.reference.BuildConfig
 
 /**
  * Class to create a VideoRepository implementation according to specific requirements.
@@ -28,7 +29,15 @@ class VideoRepositoryFactory private constructor() {
              * Return a specific VideoRepository implementation following some rules.
              * Currently, only the FileVideoService implementation is available.
              */
-            return FileVideoRepository(application)
+            return try {
+                if (BuildConfig.GAMER_BASE_URL.isNotBlank()) {
+                    RemoteVideoRepository(application, BuildConfig.GAMER_BASE_URL)
+                } else {
+                    FileVideoRepository(application)
+                }
+            } catch (e: Exception) {
+                FileVideoRepository(application)
+            }
         }
     }
 }
