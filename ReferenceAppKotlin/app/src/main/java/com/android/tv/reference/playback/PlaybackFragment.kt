@@ -351,7 +351,7 @@ class PlaybackFragment : VideoSupportFragment() {
         // Update the player UI fairly often. The frequency of updates affects several UI components
         // such as the smoothness of the progress bar and time stamp labels updating. This value can
         // be tweaked for better performance.
-        private val PLAYER_UPDATE_INTERVAL_MILLIS = Duration.ofMillis(50).toMillis()
+        private const val PLAYER_UPDATE_INTERVAL_MILLIS = 50L
 
         // A short name to identify the media session when debugging.
         private const val MEDIA_SESSION_TAG = "ReferenceAppKotlin"

@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 object AppConfig {
     private const val PREFS_NAME = "app_config"
     private const val KEY_BASE_URL = "gamer_base_url"
-    private const val CONFIG_URL = "https://drive.google.com/uc?export=download&id=1L3E_MJT1tX5NEknIHG_dvW7IxDm5U9BM"
+    private const val CONFIG_URL = "https://gist.githubusercontent.com/m110033/7ba14b6ec7005bdde53d27c5db75ba47/raw/f636ad9fb1879ac27fa92117d7e85b00f1980aa6/config.json"
     private const val DEFAULT_BASE_URL = "http://10.0.2.2:3000"
 
     @JsonClass(generateAdapter = true)
@@ -29,6 +29,9 @@ object AppConfig {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        // 🔥 跟隨重定向
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val moshi = Moshi.Builder()
@@ -55,6 +58,12 @@ object AppConfig {
      * @return 是否成功更新配置
      */
     suspend fun fetchAndUpdateConfig(): Boolean = withContext(Dispatchers.IO) {
+        if (CONFIG_URL.isBlank()) {
+            Timber.d("【配置】CONFIG_URL 為空，跳過遠端下載，使用預設值: $DEFAULT_BASE_URL")
+            prefs.edit().putString(KEY_BASE_URL, DEFAULT_BASE_URL).apply()
+            return@withContext true
+        }
+
         try {
             Timber.d("【配置】正在從遠端下載配置: $CONFIG_URL")
 
@@ -113,4 +122,3 @@ object AppConfig {
         Timber.d("【配置】已清除配置，恢復為預設值")
     }
 }
-
