@@ -91,13 +91,27 @@ class BrowseFragment : BrowseSupportFragment(), Target {
         viewModel.browseContent.observe(
             this,
             {
-                adapter = BrowseAdapter(it, viewModel.customMenuItems.value ?: listOf())
+                adapter = BrowseAdapter(
+                    it,
+                    viewModel.customMenuItems.value ?: listOf()
+                ) { categoryName ->
+                    // 🔥 當使用者選擇左側分類時觸發
+                    Timber.d("【分類】使用者選擇了分類: $categoryName")
+                    viewModel.loadVideosByCategory(categoryName)
+                }
             }
         )
         viewModel.customMenuItems.observe(
             this,
             {
-                adapter = BrowseAdapter(viewModel.browseContent.value ?: listOf(), it)
+                adapter = BrowseAdapter(
+                    viewModel.browseContent.value ?: listOf(),
+                    it
+                ) { categoryName ->
+                    // 🔥 當使用者選擇左側分類時觸發
+                    Timber.d("【分類】使用者選擇了分類: $categoryName")
+                    viewModel.loadVideosByCategory(categoryName)
+                }
             }
         )
         viewModel.isSignedIn.observe(
@@ -148,13 +162,34 @@ class BrowseFragment : BrowseSupportFragment(), Target {
             }
         }
 
+        // 🔥 監聽 Row（分類行）選擇事件，當使用者切換左側分類時載入對應影片
+        setOnItemViewSelectedListener { itemViewHolder, item, rowViewHolder, row ->
+            // 處理影片選擇時的背景更新
+            if (item is Video) {
+                updateBackgroundDelayed(item)
+            }
+
+            // 🔥 當選擇了新的 Row（分類）時，載入該分類的影片
+            if (row is androidx.leanback.widget.ListRow) {
+                val headerItem = row.headerItem
+                val categoryName = headerItem.name
+                // 只在分類 row 時載入（排除自訂選單）
+                if (categoryName != null && !categoryName.contains("操作") && !categoryName.contains("帳號")) {
+                    Timber.d("【分類】Row 被選中: $categoryName")
+                    viewModel.loadVideosByCategory(categoryName)
+                }
+            }
+        }
+
         // BrowseSupportFragment allows for adding either text (with setTitle) or a Drawable
         // (with setBadgeDrawable) to the top right of the screen. Since we don't have a suitable
         // Drawable, we just display the app name in text.
         title = getString(R.string.app_name)
 
-        // Disable headers (side category list) to prevent header cast issues with many single-item rows
-        headersState = HEADERS_DISABLED
+        // 🔥 啟用左側的分類列表（Headers）
+        headersState = HEADERS_ENABLED
+        // 🔥 預設進入時聚焦在內容區域，而不是分類列表
+        isHeadersTransitionOnBackEnabled = true
     }
 
     /**

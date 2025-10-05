@@ -46,7 +46,8 @@ class Video(
     val seriesUri: String = "",
     val seasonUri: String = "",
     val episodeNumber: String = "",
-    val seasonNumber: String = ""
+    val seasonNumber: String = "",
+    val episodeUrl: String = ""
 ) : Parcelable {
 
     override fun toString(): String {

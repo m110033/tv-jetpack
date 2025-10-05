@@ -41,11 +41,15 @@ android {
         // such as the ability to create a user account. When false, those features are hidden,
         // there is no user account, and watch progress is stored locally.
         buildConfigField("boolean", "FIREBASE_ENABLED", "false")
-        // 使用 10.0.2.2 而非 localhost，確保 Android 模擬器可訪問主機服務
         buildConfigField "String", "GAMER_BASE_URL", '"http://10.0.2.2:3000"'
     }
 
     buildTypes {
+        debug {
+            debuggable true
+            minifyEnabled false
+            applicationIdSuffix ".debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

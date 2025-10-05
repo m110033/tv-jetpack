@@ -47,6 +47,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import timber.log.Timber
 import java.time.Duration
 
@@ -59,6 +60,22 @@ class PlaybackFragment : VideoSupportFragment() {
     private val viewModel: PlaybackViewModel by viewModels()
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var mediaSessionConnector: MediaSessionConnector
+
+    // 🔥 將 OkHttpClient 移到類別層級，避免 Socket closed 錯誤
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    // 🔥 將 data class 移到類別層級，避免 Moshi 序列化錯誤
+    private data class GamerM3u8Response(
+        val success: Boolean,
+        val sn: String?,
+        val m3u8Url: String?,
+        val referer: String?,
+        val cookies: String?,
+        val origin: String?
+    )
 
     private val uiPlaybackStateListener = object : PlaybackStateListener {
         override fun onChanged(state: VideoPlaybackState) {
@@ -142,15 +159,16 @@ class PlaybackFragment : VideoSupportFragment() {
         }
         viewModel.onStateChange(VideoPlaybackState.Load(video))
 
-        // Determine if we need to resolve gamer m3u8 JSON first
-        if (isGamerResolver(video.videoUri)) {
-            resolveGamerM3u8(video.videoUri)
+        if (isM3u8Resolver(video.videoUri)) {
+            resolveM3u8(video.videoUri)
         } else {
             prepareProgressive(video.videoUri)
         }
     }
 
-    private fun isGamerResolver(uri: String): Boolean = uri.contains("/gamer/m3u8")
+    private fun isM3u8Resolver(uri: String): Boolean {
+        return uri.contains("/m3u8?url=")
+    }
 
     private fun prepareProgressive(uri: String) {
         val dataSourceFactory = DefaultDataSource.Factory(requireContext())
@@ -162,44 +180,100 @@ class PlaybackFragment : VideoSupportFragment() {
         }
     }
 
-    private fun prepareHls(m3u8Url: String, referer: String?, cookies: String?) {
+    private fun prepareHls(m3u8Url: String, referer: String?, cookies: String?, origin: String?) {
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             val headers = mutableMapOf<String, String>()
-            referer?.takeIf { it.isNotBlank() }?.let { headers["Referer"] = it }
-            cookies?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
-            if (headers.isNotEmpty()) setDefaultRequestProperties(headers)
+
+            // 🔥 加入 Referer header（重要！）
+            referer?.takeIf { it.isNotBlank() }?.let {
+                headers["Referer"] = it
+                Timber.d("【播放】設置 Referer: $it")
+            }
+
+            origin?.takeIf { it.isNotBlank() }?.let {
+                headers["Origin"] = it
+                Timber.d("【播放】設置 Origin: $it")
+            }
+
+            cookies?.takeIf { it.isNotBlank() }?.let {
+                headers["Cookie"] = it
+                Timber.d("【播放】設置 Cookie")
+            }
+
+            if (headers.isNotEmpty()) {
+                setDefaultRequestProperties(headers)
+                Timber.i("【播放】已設置 HTTP Headers: ${headers.keys}")
+            }
+
+            // 設置超時和重定向
+            setConnectTimeoutMs(8000)
+            setReadTimeoutMs(8000)
+            setAllowCrossProtocolRedirects(true)
         }
-        val mediaSource = HlsMediaSource.Factory(httpFactory).createMediaSource(MediaItem.fromUri(m3u8Url))
+
+        val mediaSource = if (m3u8Url.endsWith(".mp4", ignoreCase = true) ||
+                              m3u8Url.endsWith(".mkv", ignoreCase = true) ||
+                              m3u8Url.endsWith(".avi", ignoreCase = true)) {
+            // 如果是影片文件直連，使用 ProgressiveMediaSource
+            Timber.i("【播放】檢測到影片直連 (MP4/MKV)，使用 Progressive 播放")
+            val dataSourceFactory = DefaultDataSource.Factory(requireContext(), httpFactory)
+            ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(m3u8Url))
+        } else {
+            // 如果是 m3u8 播放列表，使用 HlsMediaSource
+            Timber.i("【播放】檢測到 HLS 播放列表，使用 HLS 播放")
+            HlsMediaSource.Factory(httpFactory)
+                .createMediaSource(MediaItem.fromUri(m3u8Url))
+        }
+
         exoplayer?.apply {
             setMediaSource(mediaSource)
             prepare()
         }
     }
 
-    private fun resolveGamerM3u8(resolverUrl: String) {
-        val client = OkHttpClient()
-        data class GamerM3u8Response(val success: Boolean, val sn: String?, val m3u8Url: String?, val referer: String?, val cookies: String?)
+    private fun resolveM3u8(resolverUrl: String) {
+        // 🔥 顯示載入中的 spinner
+        progressBarManager?.show()
+
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                Timber.d("【播放】正在解析 m3u8: $resolverUrl")
                 val request = Request.Builder().url(resolverUrl).build()
-                client.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${'$'}{resp.code}")
+                httpClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        Timber.e("【播放】m3u8 API 返回錯誤: HTTP ${resp.code}")
+                        throw IllegalStateException("HTTP ${resp.code}")
+                    }
                     val body = resp.body?.string() ?: throw IllegalStateException("Empty body")
-                    val moshi = Moshi.Builder().build()
+                    Timber.d("【播放】收到 m3u8 回應: ${body.take(200)}")
+
+                    val moshi = Moshi.Builder()
+                        .add(KotlinJsonAdapterFactory())
+                        .build()
                     val adapter = moshi.adapter(GamerM3u8Response::class.java)
                     val parsed = adapter.fromJson(body)
                     val m3u8 = parsed?.m3u8Url
+
+                    Timber.d("【播放】解析結果 - success: ${parsed?.success}, m3u8Url: ${m3u8?.take(100)}, referer: ${parsed?.referer}, origin: ${parsed?.origin}")
+
                     if (parsed?.success == true && !m3u8.isNullOrBlank()) {
                         withContext(Dispatchers.Main) {
-                            prepareHls(m3u8, parsed.referer, parsed.cookies)
+                            Timber.i("【播放】開始播放 HLS 串流，Referer: ${parsed.referer}, Origin: ${parsed.origin}")
+                            prepareHls(m3u8, parsed.referer, parsed.cookies, parsed.origin)
+                            // 🔥 載入成功後隱藏 spinner
+                            progressBarManager?.hide()
                         }
                     } else {
-                        throw IllegalStateException("Invalid gamer m3u8 response")
+                        Timber.e("【播放】無效的 m3u8 回應: success=${parsed?.success}, m3u8Url isEmpty=${m3u8.isNullOrBlank()}")
+                        throw IllegalStateException("Invalid m3u8 response")
                     }
                 }
             } catch (e: Exception) {
-                Timber.w(e, "Failed to resolve gamer m3u8")
+                Timber.e(e, "【播放】解析 m3u8 失敗")
                 withContext(Dispatchers.Main) {
+                    // 🔥 發生錯誤時也要隱藏 spinner
+                    progressBarManager?.hide()
                     viewModel.onStateChange(VideoPlaybackState.Error(video, e))
                 }
             }

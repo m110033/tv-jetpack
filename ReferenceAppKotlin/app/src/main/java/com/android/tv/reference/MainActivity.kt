@@ -21,6 +21,7 @@ import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph
 import androidx.navigation.fragment.NavHostFragment
@@ -29,7 +30,9 @@ import com.android.tv.reference.castconnect.CastHelper
 import com.android.tv.reference.deeplink.DeepLinkViewModel
 import com.android.tv.reference.deeplink.DeepLinkViewModelFactory
 import com.android.tv.reference.shared.datamodel.Video
+import com.android.tv.reference.shared.util.AppConfig
 import com.android.tv.reference.shared.util.Result
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
@@ -46,6 +49,17 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         setContentView(R.layout.activity_main)
+
+        AppConfig.init(applicationContext)
+
+        lifecycleScope.launch {
+            val success = AppConfig.fetchAndUpdateConfig()
+            if (success) {
+                Timber.i("【配置】成功從遠端更新配置，Base URL: ${AppConfig.getBaseUrl()}")
+            } else {
+                Timber.w("【配置】無法從遠端更新配置，使用預設或快取值: ${AppConfig.getBaseUrl()}")
+            }
+        }
 
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.nav_host_fragment) as NavHostFragment

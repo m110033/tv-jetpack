@@ -22,8 +22,14 @@ import androidx.leanback.widget.ListRow
 import androidx.leanback.widget.ListRowPresenter
 import com.android.tv.reference.shared.datamodel.VideoGroup
 
-class BrowseAdapter(videoGroup: List<VideoGroup>, customMenus: List<BrowseCustomMenu>) :
-    ArrayObjectAdapter(ListRowPresenter()) {
+class BrowseAdapter(
+    videoGroup: List<VideoGroup>,
+    customMenus: List<BrowseCustomMenu>,
+    private val onHeaderSelected: ((String) -> Unit)? = null
+) : ArrayObjectAdapter(ListRowPresenter()) {
+
+    private val headerToCategory = mutableMapOf<Long, String>()
+
     init {
         addVideoGroups(videoGroup)
         add(DividerRow())
@@ -32,10 +38,11 @@ class BrowseAdapter(videoGroup: List<VideoGroup>, customMenus: List<BrowseCustom
 
     private fun addVideoGroups(videoGroup: List<VideoGroup>) {
         val cardPresenter = VideoCardPresenter()
-        videoGroup.forEach {
+        videoGroup.forEachIndexed { index, group ->
             val listRowAdapter = ArrayObjectAdapter(cardPresenter)
-            listRowAdapter.addAll(0, it.videoList)
-            val headerItem = HeaderItem(it.category)
+            listRowAdapter.addAll(0, group.videoList)
+            val headerItem = HeaderItem(index.toLong(), group.category)
+            headerToCategory[index.toLong()] = group.category
             add(ListRow(headerItem, listRowAdapter))
         }
     }
@@ -47,6 +54,12 @@ class BrowseAdapter(videoGroup: List<VideoGroup>, customMenus: List<BrowseCustom
             listRowAdapter.addAll(0, menu.menuItems)
             val headerItem = HeaderItem(menu.title)
             add(ListRow(headerItem, listRowAdapter))
+        }
+    }
+
+    fun notifyHeaderSelected(headerId: Long) {
+        headerToCategory[headerId]?.let { category ->
+            onHeaderSelected?.invoke(category)
         }
     }
 }
